@@ -156,6 +156,13 @@ type Game struct {
 
 	// In Game struct, add:
 	starStripImg *ebiten.Image
+
+	// In Game struct, add fire animation state and images
+	fireImgPlayer *ebiten.Image
+	fireImgEnemy  *ebiten.Image
+	showFire      bool
+	fireStartTime time.Time
+	fireType      int // 0: none, 1: player fire, 2: enemy fire
 }
 
 // GameState represents the current state of the game UI
@@ -1030,6 +1037,41 @@ func (g *Game) drawPlaying(screen *ebiten.Image) {
 		g.prevMousePressed = ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft)
 		return
 	}
+
+	// After answer, show fire if needed
+	if g.showFeedback && !g.showFire && g.selectedAns != -1 && g.currentQ < len(g.quizQuestions) {
+		isBonusQ := g.currentQ == 0
+		if !isBonusQ {
+			if g.feedbackRight {
+				g.showFire = true
+				g.fireStartTime = time.Now()
+				g.fireType = 1 // player fire
+			} else {
+				g.showFire = true
+				g.fireStartTime = time.Now()
+				g.fireType = 2 // enemy fire
+			}
+		}
+	}
+	// Block question advance until fire is done
+	if g.showFire {
+		if time.Since(g.fireStartTime) >= time.Second {
+			g.showFire = false
+			g.fireType = 0
+			// After fire, hide feedback and advance question
+			g.showFeedback = false
+			g.selectedAns = -1
+			g.currentQ++
+			if g.currentQ < len(g.quizQuestions) {
+				g.timerActive = true
+				g.questionTimer = time.Now()
+			}
+		} else {
+			// Draw ships with fire overlay
+			g.drawShips(screen)
+			return
+		}
+	}
 }
 
 func (g *Game) drawGameOver(screen *ebiten.Image) {
@@ -1086,8 +1128,31 @@ func NewGame() *Game {
 	g.initLogo()
 	g.initShips()
 	g.initCompass()
-	g.initStarStrip() // <-- add this
+	g.initStarStrip()
+	g.initFireAnimation() // <-- add this
 	return g
+}
+
+// Add fire animation image loader
+func (g *Game) initFireAnimation() {
+	// Player fire
+	firePath := "assets/fire_animation_whole.png"
+	data, err := os.ReadFile(firePath)
+	if err == nil {
+		img, err := png.Decode(bytes.NewReader(data))
+		if err == nil {
+			g.fireImgPlayer = ebiten.NewImageFromImage(img)
+		}
+	}
+	// Enemy fire
+	fireEnemyPath := "assets/fire_animation_whole_enemy.png"
+	data, err = os.ReadFile(fireEnemyPath)
+	if err == nil {
+		img, err := png.Decode(bytes.NewReader(data))
+		if err == nil {
+			g.fireImgEnemy = ebiten.NewImageFromImage(img)
+		}
+	}
 }
 
 // Add a stub for initFont if missing
@@ -1172,6 +1237,13 @@ func (g *Game) Update() error {
 		g.hoveredMenu = -1
 		difficulties := []string{"Easy", "Medium", "Hard", "Extreme"}
 		for i, rect := range g.menuRects {
+			locked := false
+			if difficulties[i] != "Easy" && !g.unlockedDifficulties[difficulties[i]] {
+				locked = true
+			}
+			if locked {
+				continue // skip locked difficulties for hover/click
+			}
 			if x >= rect.Min.X && x < rect.Max.X && y >= rect.Min.Y && y < rect.Max.Y {
 				g.hoveredMenu = i
 				break
@@ -1832,6 +1904,47 @@ func (g *Game) drawShips(screen *ebiten.Image) {
 		op.GeoM.Translate(float64(enemyShipX), float64(enemyShipY))
 		screen.DrawImage(enemyFrame, op)
 	}
+
+	// Draw fire overlay if active
+	if g.showFire && g.fireType != 0 {
+		if g.fireType == 1 && g.fireImgPlayer != nil {
+			// Player fire: right edge of player ship to left edge of enemy ship
+			playerShipW := 200
+			playerShipH := 140
+			playerShipX := 60
+			playerShipY := ScreenHeight - 60 - playerShipH
+			enemyShipX := ScreenWidth - 200 - 60
+			fireW := enemyShipX - (playerShipX + playerShipW)
+			fireH := 80
+			fireY := playerShipY + playerShipH/2 - fireH/2
+			if fireW > 0 {
+				op := &ebiten.DrawImageOptions{}
+				sx := float64(fireW) / float64(g.fireImgPlayer.Bounds().Dx())
+				sy := float64(fireH) / float64(g.fireImgPlayer.Bounds().Dy())
+				op.GeoM.Scale(sx, sy)
+				op.GeoM.Translate(float64(playerShipX+playerShipW), float64(fireY))
+				screen.DrawImage(g.fireImgPlayer, op)
+			}
+		}
+		if g.fireType == 2 && g.fireImgEnemy != nil {
+			// Enemy fire: left edge of enemy ship to right edge of player ship
+			playerShipX := 60
+			playerShipW := 200
+			playerShipY := ScreenHeight - 60 - 140
+			enemyShipX := ScreenWidth - 200 - 60
+			fireW := enemyShipX - (playerShipX + playerShipW)
+			fireH := 80
+			fireY := playerShipY + 140/2 - fireH/2
+			if fireW > 0 {
+				op := &ebiten.DrawImageOptions{}
+				sx := float64(fireW) / float64(g.fireImgEnemy.Bounds().Dx())
+				sy := float64(fireH) / float64(g.fireImgEnemy.Bounds().Dy())
+				op.GeoM.Scale(sx, sy)
+				op.GeoM.Translate(float64(playerShipX+playerShipW), float64(fireY))
+				screen.DrawImage(g.fireImgEnemy, op)
+			}
+		}
+	}
 }
 
 // Add helper to convert bool to float64
@@ -1843,7 +1956,7 @@ func boolToFloat(b bool) float64 {
 }
 
 func (g *Game) drawStarModal(screen *ebiten.Image) {
-	w, h := 700, 380 // Increased size
+	w, h := 700, 380 // Modal size unchanged
 	x := (ScreenWidth - w) / 2
 	y := (ScreenHeight - h) / 2
 	// Border color: red if failed, gold otherwise
@@ -1859,12 +1972,11 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 	drawWrappedTextWithShadow(screen, title, g.confirmFont, x+32, y+48, w-64, 28, VictoryGold)
 
 	// --- Draw star strip ---
+	starStripY := y + 70 // Move star further upward
 	if g.starStripImg != nil {
-		// Determine frame based on subject percent (not total score)
-		percent := g.scorePercent // This is already per subject
-		frame := 5                // default: empty
+		percent := g.scorePercent
+		frame := 5 // default: empty
 		if g.enemyHP == 0 {
-			// Enemy defeated: show perfect frame (frame 0)
 			frame = 0
 		} else if percent == 100 {
 			frame = 0
@@ -1879,24 +1991,22 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 		} else if percent == 0 {
 			frame = 5
 		}
-		// Star strip is 6 frames, vertical, all same width/height
 		imgW := g.starStripImg.Bounds().Dx()
 		imgH := g.starStripImg.Bounds().Dy()
 		frameH := imgH / 6
 		starX := x + w/2 - imgW/2
-		starY := y + 40
 		srcRect := image.Rect(0, frame*frameH, imgW, (frame+1)*frameH)
 		frameImg := g.starStripImg.SubImage(srcRect).(*ebiten.Image)
 		starW := 120
 		starH := 120
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(float64(starW)/float64(imgW), float64(starH)/float64(frameH))
-		op.GeoM.Translate(float64(starX), float64(starY))
+		op.GeoM.Translate(float64(starX), float64(starStripY))
 		screen.DrawImage(frameImg, op)
 	}
 
-	// Score and rank
-	scoreY := y + 250 // add even more space below the star
+	// Add more space below the star strip
+	scoreY := starStripY + 120 + 18 // 18px extra space
 
 	// Get total score from all subjects
 	totalScore := 0
@@ -1912,23 +2022,29 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 
 	// Show total score from all subjects
 	totalScoreText := "Total Score (all subjects): " + itoa(totalScore) + " pts"
-	totalScoreY := scoreY + 30
+	totalScoreY := scoreY + 32 // More space between score and total
 	drawWrappedTextWithShadow(screen, totalScoreText, g.confirmFont, x+32, totalScoreY, w-64, 24, OceanTeal)
 
 	rank := g.getRankText()
-	rankY := totalScoreY + 36
+	rankY := totalScoreY + 36 // More space between total and rank
 	drawWrappedTextWithShadow(screen, rank, g.confirmFont, x+32, rankY, w-64, 24, g.getRankColor())
 
 	// Feedback
 	meaning := g.getMeaningText()
-	meaningY := rankY + 30
+	meaningY := rankY + 36 // More space between rank and feedback
 	drawWrappedTextWithShadow(screen, meaning, g.confirmFont, x+32, meaningY, w-64, 20, SmokeWhite)
 
-	// Buttons (larger for bigger modal)
+	// Buttons (keep at bottom, add more space above)
 	btnW := 160
 	btnH := 44
-	btnY := y + h - 52
-	btnX1 := x + 80
+	// Add extra space between feedback and buttons
+	extraBtnSpace := 80                   // Set to 32px
+	btnY := meaningY + extraBtnSpace + 20 // 20 is line height for feedback
+	// Ensure buttons don't go below modal (clamp if needed)
+	if btnY > y+h-52 {
+		btnY = y + h - 52
+	}
+	btnX1 := x + 120
 	btnX2 := x + w - btnW - 80
 	vector.DrawFilledRect(screen, float32(btnX1), float32(btnY), float32(btnW), float32(btnH), OceanTeal, true)
 	vector.StrokeRect(screen, float32(btnX1), float32(btnY), float32(btnW), float32(btnH), 2, VictoryGold, true)
