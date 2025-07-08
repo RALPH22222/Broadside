@@ -6,8 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"time"
 	"strings"
+	"time"
 
 	"log"
 
@@ -640,8 +640,9 @@ func (g *Game) drawHowToPlayOverlay(screen *ebiten.Image) {
 	}
 	vector.DrawFilledRect(screen, float32(x), float32(y), float32(w), float32(h), GunmetalGray, true)
 	vector.StrokeRect(screen, float32(x), float32(y), float32(w), float32(h), 4, VictoryGold, true)
-	msg := "How to Play:\n- Use arrow keys to move\n- Space to shoot\n- ESC to return to menu\n- Defeat all enemies!\n(Press ESC or click to close)"
-	drawWrappedTextWithShadow(screen, msg, g.gameFont, x+40, y+80, w-80, 36, SmokeWhite)
+	msg := "How to Play:\n- Choose the correct answer within 10 seconds to kill enemies\n- Use a safety shield to survive wrong answers up to 3 times\n- Defeat the enemies!!\n- ESC to return to menu\n(Press ESC or click to close)"
+	textPaddingX := 20
+	drawWrappedTextWithShadow(screen, msg, g.gameFont, x+textPaddingX, y+80, w-(textPaddingX*2), 36, SmokeWhite)
 }
 
 func (g *Game) drawLeaderboardOverlay(screen *ebiten.Image) {
@@ -667,7 +668,7 @@ func (g *Game) drawLeaderboardOverlay(screen *ebiten.Image) {
 	leaderY := h/2 - leaderH/2
 
 	// --- Logo ---
-logoW, logoH := 220, 220
+	logoW, logoH := 220, 220
 	logoX := leaderX + leaderW + 80
 	logoY := leaderY + leaderH/2 - logoH/2
 	if g.logoImg != nil {
@@ -700,17 +701,16 @@ logoW, logoH := 220, 220
 
 	// Calculate the total usable width for columns within the table's inner padding
 	effectiveTableWidth := leaderW - 2*tableInnerPadX
-	
+
 	// Distribute the effective width to columns
 	col1Width := effectiveTableWidth * 2 / 3
 	col2Width := effectiveTableWidth - col1Width
 
 	colWidths := []int{col1Width, col2Width}
 
-	
 	// colX[j] will now be the left edge of the background rectangle for column j
 	colX := []int{
-		leaderX + tableInnerPadX, // Left edge of the first column
+		leaderX + tableInnerPadX,             // Left edge of the first column
 		leaderX + tableInnerPadX + col1Width, // Left edge of the second column
 	}
 
@@ -718,13 +718,13 @@ logoW, logoH := 220, 220
 
 	// --- FIX --- Define the exact Y coordinates for the top and bottom of the entire grid area
 	// These will be used for both row backgrounds and horizontal/vertical lines.
-	tableGridTopY := float32(tableY - cellPadY) // Top of the header row's background
+	tableGridTopY := float32(tableY - cellPadY)                         // Top of the header row's background
 	tableGridBottomY := float32(tableY + maxRows*lineHeight + cellPadY) // Bottom of the last data row's background
 
 	// --- Rows (including header) ---
 	for i := 0; i < maxRows; i++ {
-		rowY := tableY + i*lineHeight // Y position for text baseline
-		rowBgY := rowY - cellPadY      // Y position for background rectangle top
+		rowY := tableY + i*lineHeight     // Y position for text baseline
+		rowBgY := rowY - cellPadY         // Y position for background rectangle top
 		rowBgH := lineHeight + 2*cellPadY // Height of background rectangle
 
 		for j := 0; j < len(colX); j++ {
@@ -734,9 +734,9 @@ logoW, logoH := 220, 220
 			var bgColor color.RGBA
 			if i == 0 {
 				bgColor = color.RGBA{60, 60, 60, 240} // Header background (dark gray)
-			} else if (i % 2) == 1 { 
+			} else if (i % 2) == 1 {
 				bgColor = color.RGBA{45, 45, 45, 180} // Slightly lighter dark gray
-			} else { 
+			} else {
 				bgColor = color.RGBA{35, 35, 35, 150} // Slightly darker dark gray
 			}
 
@@ -1157,6 +1157,7 @@ func (g *Game) Update() error {
 			case 1: // How to Play
 				g.state = StateHowToPlay
 			case 2: // Leaderboard
+				g.leaderboardFetched = false // <-- ensure leaderboard always refreshes
 				g.state = StateLeaderboard
 			case 3: // Exit
 				os.Exit(0)
@@ -1208,7 +1209,7 @@ func (g *Game) Update() error {
 	// When entering StateLeaderboard, fetch leaderboard entries from the database if not already fetched
 	if g.state == StateLeaderboard && !g.leaderboardFetched {
 		fmt.Println("About to fetch leaderboard entries")
-		entries, err := game.GetTopLeaderboard(5)
+		entries, err := game.GetTopLeaderboard(10)
 		fmt.Println("After fetch call")
 		if err != nil {
 			fmt.Println("Leaderboard DB error:", err)
@@ -1216,8 +1217,8 @@ func (g *Game) Update() error {
 			fmt.Printf("Fetched %d leaderboard entries\n", len(entries))
 			for i, e := range entries {
 				fmt.Printf("Fetched Entry %d: %+v\n", i, e)
+				g.leaderboardEntries = entries
 			}
-			g.leaderboardEntries = entries
 		}
 		g.leaderboardFetched = true
 	}
@@ -1439,7 +1440,7 @@ func (g *Game) Update() error {
 		if g.starModalResult == 0 {
 			for i, rect := range g.continueRects {
 				if x >= rect.Min.X && x < rect.Max.X && y >= rect.Min.Y && y < rect.Max.Y && mouseJustPressed {
-					g.starModalResult = i + 1 // 1: continue, 2: exit
+					g.starModalResult = i + 1 // 1: continue/retry, 2: exit
 				}
 			}
 			if ebiten.IsKeyPressed(ebiten.KeyEnter) || ebiten.IsKeyPressed(ebiten.KeyKPEnter) {
@@ -1450,43 +1451,52 @@ func (g *Game) Update() error {
 			}
 		} else {
 			if g.starModalResult == 1 {
-				// Mark subject as answered for this difficulty
-				if g.answeredSubjects == nil {
-					g.answeredSubjects = make(map[string]bool)
-				}
-				g.answeredSubjects[g.selectedSubject] = true
-				// Check if all subjects are answered for this difficulty
-				allSubjects := g.quiz.ListSubjects()
-				allAnswered := true
-				for _, subj := range allSubjects {
-					if !g.answeredSubjects[subj] {
-						allAnswered = false
-						break
+				if g.starCount < 1 {
+					// Retry: reset all state and restart the same subject/difficulty
+					g.startCombatWithSubjectAndDifficulty(g.selectedSubject, g.selectedDifficulty)
+					g.showStarModal = false
+					g.starModalResult = 0
+					g.state = StatePlaying
+					return nil
+				} else {
+					// Continue: mark subject as answered for this difficulty
+					if g.answeredSubjects == nil {
+						g.answeredSubjects = make(map[string]bool)
 					}
-				}
-				if allAnswered {
-					// Unlock next difficulty if not already unlocked
-					difficulties := []string{"Easy", "Medium", "Hard", "Extreme"}
-					curIdx := 0
-					for i, d := range difficulties {
-						if d == g.selectedDifficulty {
-							curIdx = i
+					g.answeredSubjects[g.selectedSubject] = true
+					// Check if all subjects are answered for this difficulty
+					allSubjects := g.quiz.ListSubjects()
+					allAnswered := true
+					for _, subj := range allSubjects {
+						if !g.answeredSubjects[subj] {
+							allAnswered = false
 							break
 						}
 					}
-					if curIdx+1 < len(difficulties) {
-						nextDiff := difficulties[curIdx+1]
-						g.unlockedDifficulties[nextDiff] = true
+					if allAnswered {
+						// Unlock next difficulty if not already unlocked
+						difficulties := []string{"Easy", "Medium", "Hard", "Extreme"}
+						curIdx := 0
+						for i, d := range difficulties {
+							if d == g.selectedDifficulty {
+								curIdx = i
+								break
+							}
+						}
+						if curIdx+1 < len(difficulties) {
+							nextDiff := difficulties[curIdx+1]
+							g.unlockedDifficulties[nextDiff] = true
+						}
+						// Reset answeredSubjects for next difficulty
+						g.answeredSubjects = make(map[string]bool)
+						g.state = StateSelectDifficulty
+						g.starModalResult = 0
+						return nil
 					}
-					// Reset answeredSubjects for next difficulty
-					g.answeredSubjects = make(map[string]bool)
-					g.state = StateSelectDifficulty
+					// Otherwise, go to subject selection for more subjects
+					g.state = StateSelectSubject
 					g.starModalResult = 0
-					return nil
 				}
-				// Otherwise, go to subject selection for more subjects
-				g.state = StateSelectSubject
-				g.starModalResult = 0
 			} else if g.starModalResult == 2 {
 				// Exit: terminate program
 				os.Exit(0)
@@ -1853,7 +1863,10 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 		// Determine frame based on subject percent (not total score)
 		percent := g.scorePercent // This is already per subject
 		frame := 5                // default: empty
-		if percent == 100 {
+		if g.enemyHP == 0 {
+			// Enemy defeated: show perfect frame (frame 0)
+			frame = 0
+		} else if percent == 100 {
 			frame = 0
 		} else if percent >= 90 {
 			frame = 1
@@ -1871,7 +1884,7 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 		imgH := g.starStripImg.Bounds().Dy()
 		frameH := imgH / 6
 		starX := x + w/2 - imgW/2
-		starY := y + 80
+		starY := y + 40
 		srcRect := image.Rect(0, frame*frameH, imgW, (frame+1)*frameH)
 		frameImg := g.starStripImg.SubImage(srcRect).(*ebiten.Image)
 		starW := 120
@@ -1883,7 +1896,7 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 	}
 
 	// Score and rank
-	scoreY := y + 200 // move down to account for new star position
+	scoreY := y + 250 // add even more space below the star
 
 	// Get total score from all subjects
 	totalScore := 0
@@ -1914,14 +1927,18 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 	// Buttons (larger for bigger modal)
 	btnW := 160
 	btnH := 44
-	btnY := y + h - 72
+	btnY := y + h - 52
 	btnX1 := x + 80
 	btnX2 := x + w - btnW - 80
 	vector.DrawFilledRect(screen, float32(btnX1), float32(btnY), float32(btnW), float32(btnH), OceanTeal, true)
 	vector.StrokeRect(screen, float32(btnX1), float32(btnY), float32(btnW), float32(btnH), 2, VictoryGold, true)
 	vector.DrawFilledRect(screen, float32(btnX2), float32(btnY), float32(btnW), float32(btnH), AlertRed, true)
 	vector.StrokeRect(screen, float32(btnX2), float32(btnY), float32(btnW), float32(btnH), 2, VictoryGold, true)
-	drawWrappedTextWithShadow(screen, "Continue", g.confirmFont, btnX1+32, btnY+30, btnW-36, 20, SmokeWhite)
+	if g.starCount < 1 {
+		drawWrappedTextWithShadow(screen, "Retry", g.confirmFont, btnX1+32, btnY+30, btnW-36, 20, SmokeWhite)
+	} else {
+		drawWrappedTextWithShadow(screen, "Continue", g.confirmFont, btnX1+32, btnY+30, btnW-36, 20, SmokeWhite)
+	}
 	drawWrappedTextWithShadow(screen, "Exit", g.confirmFont, btnX2+56, btnY+30, btnW-36, 20, SmokeWhite)
 	g.continueRects = []image.Rectangle{
 		image.Rect(btnX1, btnY, btnX1+btnW, btnY+btnH),
