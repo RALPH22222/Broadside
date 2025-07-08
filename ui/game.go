@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"time"
+	"strings"
 
 	"log"
 
@@ -649,19 +650,24 @@ func (g *Game) drawLeaderboardOverlay(screen *ebiten.Image) {
 	if fontFace == nil {
 		fontFace = g.gameFont
 	}
-	// --- Premium background vignette ---
+
+	// --- Background vignette ---
 	for i := 0; i < 80; i++ {
 		alpha := uint8(120 * float64(i) / 80)
 		vector.StrokeRect(screen, float32(i), float32(i), float32(w-2*i), float32(h-2*i), 2, color.RGBA{0, 0, 0, alpha}, true)
 	}
-	// --- Table area ---
+
+	// --- Leaderboard dimensions ---
 	leaderW := w * 2 / 5
-	leaderH := h * 3 / 5
+	lineHeight := 40
+	cellPadY := 6 // Vertical padding for cell backgrounds
+	maxRows := 11 // Includes header row (row 0) + 10 data rows (rows 1-10)
+	leaderH := lineHeight*maxRows + 160
 	leaderX := w / 8
-	leaderY := h / 4
-	// --- Logo area (same as title screen: 220x220, centered vertically) ---
-	logoW := 220
-	logoH := 220
+	leaderY := h/2 - leaderH/2
+
+	// --- Logo ---
+logoW, logoH := 220, 220
 	logoX := leaderX + leaderW + 80
 	logoY := leaderY + leaderH/2 - logoH/2
 	if g.logoImg != nil {
@@ -670,90 +676,132 @@ func (g *Game) drawLeaderboardOverlay(screen *ebiten.Image) {
 		sy := float64(logoH) / float64(g.logoImg.Bounds().Dy())
 		logoOp.GeoM.Scale(sx, sy)
 		logoOp.GeoM.Translate(float64(logoX), float64(logoY))
-		// Drop shadow
-		shadowOp := *logoOp
-		shadowOp.GeoM.Translate(8, 8)
-		shadowCol := color.RGBA{0, 0, 0, 80}
-		shadowImg := ebiten.NewImage(g.logoImg.Bounds().Dx(), g.logoImg.Bounds().Dy())
-		shadowImg.Fill(shadowCol)
-		screen.DrawImage(shadowImg, &shadowOp)
 		screen.DrawImage(g.logoImg, logoOp)
 	}
-	// --- Table shadow and background ---
+
+	// --- Table background ---
 	shadowCol := color.RGBA{0, 0, 0, 80}
 	vector.DrawFilledRect(screen, float32(leaderX+8), float32(leaderY+8), float32(leaderW), float32(leaderH), shadowCol, true)
 	vector.DrawFilledRect(screen, float32(leaderX), float32(leaderY), float32(leaderW), float32(leaderH), GunmetalGray, true)
 	vector.StrokeRect(screen, float32(leaderX), float32(leaderY), float32(leaderW), float32(leaderH), 5, VictoryGold, true)
-	// --- Plain, large header ---
+
+	// --- Title ---
 	premiumTitle := "LEADERBOARD"
 	fontSize := 96
 	titleBounds, _ := font.BoundString(fontFace, premiumTitle)
 	titleW := (titleBounds.Max.X - titleBounds.Min.X).Ceil()
 	titleX := leaderX + (leaderW-titleW)/2
-	titleY := leaderY + 60
+	titleY := leaderY + 10
 	text.Draw(screen, premiumTitle, fontFace, titleX, titleY+fontSize, SmokeWhite)
-	// --- Table columns and rows ---
+
+	// --- Columns ---
 	headers := []string{"Name", "Score"}
-	colWidths := []int{leaderW * 2 / 3, leaderW/3 - 32}
-	colX := []int{leaderX + 32, leaderX + 32 + colWidths[0] + 16}
-	tableY := leaderY + 120
-	lineHeight := 32 // Reduced from 48 for a more compact table
-	cellPadY := 4    // Reduced from 12 for less padding
-	// Table area padding
-	tablePadX := 24
-	tablePadY := 16
-	// Draw headers above the table, outside the border, centered over columns
-	headY := tableY - lineHeight - 10
-	for i, htxt := range headers {
-		bounds, _ := font.BoundString(fontFace, htxt)
-		cellW := colWidths[i]
-		textW := (bounds.Max.X - bounds.Min.X).Ceil()
-		cellX := colX[i]
-		textX := cellX + (cellW-textW)/2
-		textY := headY + lineHeight
-		text.Draw(screen, htxt, fontFace, textX, textY, SmokeWhite)
+	const tableInnerPadX = 24
+
+	// Calculate the total usable width for columns within the table's inner padding
+	effectiveTableWidth := leaderW - 2*tableInnerPadX
+	
+	// Distribute the effective width to columns
+	col1Width := effectiveTableWidth * 2 / 3
+	col2Width := effectiveTableWidth - col1Width
+
+	colWidths := []int{col1Width, col2Width}
+
+	
+	// colX[j] will now be the left edge of the background rectangle for column j
+	colX := []int{
+		leaderX + tableInnerPadX, // Left edge of the first column
+		leaderX + tableInnerPadX + col1Width, // Left edge of the second column
 	}
-	// Rows (centered text, always 11 rows, inside table)
-	maxRows := 11
+
+	tableY := leaderY + 120 // Top Y for the text baseline of the first row (header)
+
+	// --- FIX --- Define the exact Y coordinates for the top and bottom of the entire grid area
+	// These will be used for both row backgrounds and horizontal/vertical lines.
+	tableGridTopY := float32(tableY - cellPadY) // Top of the header row's background
+	tableGridBottomY := float32(tableY + maxRows*lineHeight + cellPadY) // Bottom of the last data row's background
+
+	// --- Rows (including header) ---
 	for i := 0; i < maxRows; i++ {
-		rowY := tableY + i*lineHeight
-		rowBgX := leaderX + tablePadX
-		rowBgY := rowY - cellPadY
-		rowBgW := leaderW - 2*tablePadX
-		rowBgH := lineHeight + 2*cellPadY
-		if i%2 == 0 {
-			vector.DrawFilledRect(screen, float32(rowBgX), float32(rowBgY), float32(rowBgW), float32(rowBgH), color.RGBA{47, 79, 79, 80}, true)
+		rowY := tableY + i*lineHeight // Y position for text baseline
+		rowBgY := rowY - cellPadY      // Y position for background rectangle top
+		rowBgH := lineHeight + 2*cellPadY // Height of background rectangle
+
+		for j := 0; j < len(colX); j++ {
+			cellLeftX := colX[j]      // Left edge of cell background
+			cellWidth := colWidths[j] // Width of cell background
+
+			var bgColor color.RGBA
+			if i == 0 {
+				bgColor = color.RGBA{60, 60, 60, 240} // Header background (dark gray)
+			} else if (i % 2) == 1 { 
+				bgColor = color.RGBA{45, 45, 45, 180} // Slightly lighter dark gray
+			} else { 
+				bgColor = color.RGBA{35, 35, 35, 150} // Slightly darker dark gray
+			}
+
+			//Draw cell background using the precise column boundaries
+			vector.DrawFilledRect(screen, float32(cellLeftX), float32(rowBgY), float32(cellWidth), float32(rowBgH), bgColor, true)
 		}
+
 		var rowVals []string
-		if i < len(g.leaderboardEntries) {
-			entry := g.leaderboardEntries[i]
-			rowVals = []string{entry.PlayerName, itoa(entry.Score)}
+		if i == 0 {
+			rowVals = headers
+		} else if i-1 < len(g.leaderboardEntries) {
+			entry := g.leaderboardEntries[i-1]
+			rowVals = []string{strings.TrimSpace(entry.PlayerName), itoa(entry.Score)}
 		} else {
-			rowVals = []string{"", ""}
+			rowVals = []string{"", ""} // Empty rows if not enough entries
 		}
+
 		for j, val := range rowVals {
 			bounds, _ := font.BoundString(fontFace, val)
-			cellW := colWidths[j]
-			cellH := lineHeight
 			textW := (bounds.Max.X - bounds.Min.X).Ceil()
 			textH := (bounds.Max.Y - bounds.Min.Y).Ceil()
-			cellX := colX[j]
-			cellY := rowY
-			textX := cellX + (cellW-textW)/2
-			textY := cellY + (cellH-textH)/2 + textH
+			cellLeftX := colX[j]
+			cellWidth := colWidths[j]
+			textX := cellLeftX + (cellWidth-textW)/2
+			textY := rowY + (lineHeight+textH)/2 - 2 // Adjust for font baseline
 			text.Draw(screen, val, fontFace, textX, textY, SmokeWhite)
 		}
 	}
-	// Table lines (all inside the table area)
-	linePadX := tablePadX + 4
-	linePadY := tablePadY
-	for i := 0; i < len(colX); i++ {
-		vector.StrokeLine(screen, float32(colX[i]-linePadX), float32(tableY-linePadY), float32(colX[i]-linePadX), float32(tableY+maxRows*lineHeight+linePadY), 2, VictoryGold, true)
-	}
+
+	// --- Grid lines ---
+	// --- FIX --- Define the exact X coordinates for the left and right of the entire grid area
+	// These must match the boundaries used for drawing cell backgrounds.
+	tableGridLeftX := float32(leaderX + tableInnerPadX)
+	tableGridRightX := float32(leaderX + tableInnerPadX + col1Width + col2Width) // Right edge of the last column
+
+	// Vertical lines
+	// --- FIX --- Draw each vertical line exactly at the column boundaries
+	vector.StrokeLine(screen,
+		tableGridLeftX, tableGridTopY,
+		tableGridLeftX, tableGridBottomY,
+		2, VictoryGold, true) // Leftmost vertical line
+
+	vector.StrokeLine(screen,
+		float32(colX[1]), tableGridTopY, // Line between column 1 and 2
+		float32(colX[1]), tableGridBottomY,
+		2, VictoryGold, true)
+
+	vector.StrokeLine(screen,
+		tableGridRightX, tableGridTopY,
+		tableGridRightX, tableGridBottomY,
+		2, VictoryGold, true) // Rightmost vertical line (drawn only once)
+
+	// Horizontal lines
 	for i := 0; i <= maxRows; i++ {
-		rowY := tableY + i*lineHeight - linePadY
-		vector.StrokeLine(screen, float32(leaderX+linePadX), float32(rowY), float32(leaderX+leaderW-linePadX), float32(rowY), 2, VictoryGold, true)
+		// --- FIX --- Calculate lineY to align with the top/bottom of row backgrounds
+		lineY := float32(tableY + i*lineHeight - cellPadY)
+		if i == maxRows { // For the very last line, ensure it's at the bottom of the last row's background
+			lineY = tableGridBottomY
+		}
+		vector.StrokeLine(screen,
+			tableGridLeftX, lineY,
+			tableGridRightX, lineY, // --- FIX --- Ensure horizontal lines span the exact table width
+			2, VictoryGold, true)
 	}
+
 	// --- Footer ---
 	msg2 := "(Press ESC or click to close)"
 	msg2Bounds, _ := font.BoundString(fontFace, msg2)
