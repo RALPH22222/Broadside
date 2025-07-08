@@ -98,17 +98,17 @@ func NewLeaderboardEntry(gs *GameState) LeaderboardEntry {
 
 // CalcRankAndPercent calculates the rank and score percent for the player.
 func CalcRankAndPercent(score, mainQDone int, bonusAnswered bool, enemyHP, playerHP, level int) (rank string, percent int) {
-	// Use correct max score per level
 	mainQuestions := []int{10, 15, 20, 25}
 	basePoints := []int{10, 20, 30, 40}
 	maxScore := mainQuestions[level] * basePoints[level]
-	if bonusAnswered && enemyHP == 0 {
-		unused := mainQuestions[level] - mainQDone
-		maxScore += unused * basePoints[level]
-	}
+	// Remove bonus/unused logic for maxScore
 	percent = 0
 	if maxScore > 0 {
 		percent = (score * 100) / maxScore
+	}
+	// If enemy defeated and all main questions answered, force 100%
+	if enemyHP == 0 && mainQDone == mainQuestions[level] {
+		percent = 100
 	}
 	if playerHP == 0 || percent < 50 {
 		rank = "Defeated"

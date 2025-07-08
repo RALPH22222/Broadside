@@ -58,8 +58,6 @@ const (
 
 var levelNames = []string{"Easy", "Medium", "Hard", "Extreme"}
 
-var pointsPerQ = []int{10, 20, 30, 40}
-
 // Game represents the main game state
 type Game struct {
 	gameFont    font.Face
@@ -148,16 +146,15 @@ type Game struct {
 	starShineAngle     float64
 
 	// --- Pending answer system ---
-	pendingAnswer        bool
-	pendingIsBonusQ      bool
-	pendingIsCorrect     bool
-	pendingQuestionsLeft int
-
+	pendingAnswer bool
 	// In Game struct, add:
 	// lastNavClick time.Time
 
 	// In Game struct, add:
 	compassImg *ebiten.Image
+
+	// In Game struct, add:
+	starStripImg *ebiten.Image
 }
 
 // GameState represents the current state of the game UI
@@ -1041,6 +1038,7 @@ func NewGame() *Game {
 	g.initLogo()
 	g.initShips()
 	g.initCompass()
+	g.initStarStrip() // <-- add this
 	return g
 }
 
@@ -1802,24 +1800,42 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 	title := "Test Results"
 	drawWrappedTextWithShadow(screen, title, g.confirmFont, x+32, y+48, w-64, 28, VictoryGold)
 
-	starY := y + 110
-	starX := x + 120
-	starGap := 100
-	fullStars := int(g.starCount)
-	halfStar := g.starCount-float64(fullStars) >= 0.5
-	for i := 0; i < 3; i++ {
-		cx := starX + i*starGap
-		if i < fullStars {
-			drawStar(screen, cx, starY, 28, VictoryGold, 1.0)
-		} else if i == fullStars && halfStar {
-			drawStar(screen, cx, starY, 28, VictoryGold, 0.5)
-		} else {
-			drawStar(screen, cx, starY, 28, SmokeWhite, 1.0)
+	// --- Draw star strip ---
+	if g.starStripImg != nil {
+		// Determine frame based on subject percent (not total score)
+		percent := g.scorePercent // This is already per subject
+		frame := 5                // default: empty
+		if percent == 100 {
+			frame = 0
+		} else if percent >= 90 {
+			frame = 1
+		} else if percent >= 80 {
+			frame = 2
+		} else if percent >= 70 {
+			frame = 3
+		} else if percent >= 1 {
+			frame = 4
+		} else if percent == 0 {
+			frame = 5
 		}
+		// Star strip is 6 frames, vertical, all same width/height
+		imgW := g.starStripImg.Bounds().Dx()
+		imgH := g.starStripImg.Bounds().Dy()
+		frameH := imgH / 6
+		starX := x + w/2 - imgW/2
+		starY := y + 80
+		srcRect := image.Rect(0, frame*frameH, imgW, (frame+1)*frameH)
+		frameImg := g.starStripImg.SubImage(srcRect).(*ebiten.Image)
+		starW := 120
+		starH := 120
+		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Scale(float64(starW)/float64(imgW), float64(starH)/float64(frameH))
+		op.GeoM.Translate(float64(starX), float64(starY))
+		screen.DrawImage(frameImg, op)
 	}
 
 	// Score and rank
-	scoreY := starY + 60
+	scoreY := y + 200 // move down to account for new star position
 
 	// Get total score from all subjects
 	totalScore := 0
@@ -1862,61 +1878,6 @@ func (g *Game) drawStarModal(screen *ebiten.Image) {
 	g.continueRects = []image.Rectangle{
 		image.Rect(btnX1, btnY, btnX1+btnW, btnY+btnH),
 		image.Rect(btnX2, btnY, btnX2+btnW, btnY+btnH),
-	}
-}
-
-// drawStar draws a 5-pointed star, optionally half-filled
-func drawStar(screen *ebiten.Image, cx, cy, r int, col color.Color, fillFrac float64) {
-	ensureWhiteImg()
-	c := colorToRGBA(col)
-	points := 5
-	outer := float64(r)
-	inner := outer * 0.5
-	verts := make([]ebiten.Vertex, 0, 10)
-	for i := 0; i < points*2; i++ {
-		angle := math.Pi/2 + float64(i)*math.Pi/float64(points)
-		rad := outer
-		if i%2 == 1 {
-			rad = inner
-		}
-		x := float32(cx) + float32(rad*math.Cos(angle))
-		y := float32(cy) - float32(rad*math.Sin(angle))
-		verts = append(verts, ebiten.Vertex{
-			DstX: x, DstY: y,
-			ColorR: float32(c.R) / 255, ColorG: float32(c.G) / 255, ColorB: float32(c.B) / 255, ColorA: float32(c.A) / 255,
-		})
-	}
-	indices := []uint16{0, 2, 4, 6, 8, 1, 3, 5, 7, 9}
-	if fillFrac < 1.0 {
-		mid := cx
-		for i := 0; i < len(indices)-2; i++ {
-			v1 := verts[indices[i]]
-			v2 := verts[indices[i+1]]
-			v3 := ebiten.Vertex{DstX: float32(cx), DstY: float32(cy), ColorR: v1.ColorR, ColorG: v1.ColorG, ColorB: v1.ColorB, ColorA: v1.ColorA}
-			if v1.DstX <= float32(mid) && v2.DstX <= float32(mid) {
-				vs := []ebiten.Vertex{v1, v2, v3}
-				is := []uint16{0, 1, 2}
-				screen.DrawTriangles(vs, is, whiteImg, nil)
-			} else {
-				vs := []ebiten.Vertex{v1, v2, v3}
-				for j := range vs {
-					vs[j].ColorR = float32(SmokeWhite.R) / 255
-					vs[j].ColorG = float32(SmokeWhite.G) / 255
-					vs[j].ColorB = float32(SmokeWhite.B) / 255
-					vs[j].ColorA = float32(SmokeWhite.A) / 255
-				}
-				is := []uint16{0, 1, 2}
-				screen.DrawTriangles(vs, is, whiteImg, nil)
-			}
-		}
-	} else {
-		for i := 0; i < len(indices)-2; i++ {
-			vs := []ebiten.Vertex{
-				verts[indices[0]], verts[indices[i+1]], verts[indices[i+2]],
-			}
-			is := []uint16{0, 1, 2}
-			screen.DrawTriangles(vs, is, whiteImg, nil)
-		}
 	}
 }
 
@@ -2072,4 +2033,19 @@ func (g *Game) initCompass() {
 		return
 	}
 	g.compassImg = ebiten.NewImageFromImage(img)
+}
+
+func (g *Game) initStarStrip() {
+	starPath := "assets/star.png"
+	data, err := os.ReadFile(starPath)
+	if err != nil {
+		g.starStripImg = nil
+		return
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		g.starStripImg = nil
+		return
+	}
+	g.starStripImg = ebiten.NewImageFromImage(img)
 }
